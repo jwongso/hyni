@@ -13,6 +13,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <unistd.h>
+#include <termios.h>
 
 // command-line parameters
 struct whisper_params {
@@ -115,6 +117,34 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "\n");
 }
 
+enum class EventType {
+    NONE,
+    START,
+    PAUSE,
+    QUIT
+};
+
+EventType get_keypress() {
+    struct termios oldt, newt;
+    int ch;
+
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);  // Disable buffering and echoing
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    ch = getchar();  // Get a single key press
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore terminal settings
+
+    switch (ch) {
+    case 's': return EventType::START;
+    case 'p': return EventType::PAUSE;
+    case 'q': return EventType::QUIT;
+    default: return EventType::NONE;
+    }
+}
+
 int main(int argc, char ** argv) {
     whisper_params params;
 
@@ -146,7 +176,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    audio.resume();
+    //audio.resume();
 
     // whisper init
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
@@ -222,8 +252,8 @@ int main(int argc, char ** argv) {
 
         wavWriter.open(filename, WHISPER_SAMPLE_RATE, 16, 1);
     }
-    printf("[Start speaking]\n");
-    fflush(stdout);
+    //printf("[Start speaking]\n");
+    //fflush(stdout);
 
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
@@ -240,8 +270,25 @@ int main(int argc, char ** argv) {
             break;
         }
 
-        // process new audio
+        EventType event = get_keypress();
 
+        switch (event) {
+        case EventType::START:
+            audio.resume();
+            printf("Start\n");
+            break;
+        case EventType::PAUSE:
+            audio.pause();
+            printf("Pause\n");
+            break;
+        case EventType::QUIT:
+            printf("Quit\n");
+            return 0;
+        case EventType::NONE:
+            break;
+        }
+
+        // process new audio
         if (!use_vad) {
             while (true) {
                 // handle Ctrl + C
