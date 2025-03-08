@@ -15,12 +15,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <unistd.h>
-#include <termios.h>
 #include <atomic>
-#include <queue>
-#include <mutex>
-#include <condition_variable>
 
 // command-line parameters
 struct whisper_params {
@@ -122,6 +117,10 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
     fprintf(stderr, "\n");
 }
+
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 // Thread-safe queue for passing audio data
 class ThreadSafeQueue {
@@ -265,7 +264,7 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    //audio.resume();
+    audio.resume();
 
     // whisper init
     if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
@@ -354,8 +353,8 @@ int main(int argc, char ** argv) {
 
         wavWriter.open(filename, WHISPER_SAMPLE_RATE, 16, 1);
     }
-    //printf("[Start speaking]\n");
-    //fflush(stdout);
+    printf("[Start speaking]\n");
+    fflush(stdout);
 
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
@@ -387,6 +386,7 @@ int main(int argc, char ** argv) {
         }
 
         // process new audio
+
         if (!use_vad) {
             while (true) {
                 // handle Ctrl + C
