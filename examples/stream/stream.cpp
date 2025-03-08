@@ -10,11 +10,17 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <termios.h>
+#include <unistd.h>
 #include <string>
 #include <thread>
 #include <vector>
 #include <unistd.h>
 #include <termios.h>
+#include <atomic>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 
 // command-line parameters
 struct whisper_params {
@@ -117,31 +123,114 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "\n");
 }
 
-enum class EventType {
-    NONE,
-    START,
-    PAUSE,
-    QUIT
+// Thread-safe queue for passing audio data
+class ThreadSafeQueue {
+public:
+    void push(const std::vector<float>& data) {
+        std::lock_guard<std::mutex> lock(mutex);
+        queue.push(data);
+        cond.notify_one();
+    }
+
+    std::vector<float> pop() {
+        std::unique_lock<std::mutex> lock(mutex);
+        cond.wait(lock, [this] { return !queue.empty(); });
+        auto data = queue.front();
+        queue.pop();
+        return data;
+    }
+
+    bool empty() const {
+        std::lock_guard<std::mutex> lock(mutex);
+        return queue.empty();
+    }
+
+private:
+    std::queue<std::vector<float>> queue;
+    mutable std::mutex mutex;
+    std::condition_variable cond;
 };
 
-EventType get_keypress() {
-    struct termios oldt, newt;
-    int ch;
+// Global flag for pause/resume
+std::atomic<bool> is_paused(false);
 
+// Global flag to stop the inference thread
+std::atomic<bool> stop_inference_thread(false);
+
+// Function to listen for key presses
+void key_listener() {
+    struct termios oldt, newt;
     tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
     newt.c_lflag &= ~(ICANON | ECHO);  // Disable buffering and echoing
     tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
-    ch = getchar();  // Get a single key press
+    while (true) {
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(STDIN_FILENO, &read_fds);
+
+        struct timeval timeout = {0, 100000};  // 100 ms timeout
+        int ret = select(STDIN_FILENO + 1, &read_fds, nullptr, nullptr, &timeout);
+
+        if (ret > 0 && FD_ISSET(STDIN_FILENO, &read_fds)) {
+            char ch = getchar();
+            if (ch == 'r') {
+                is_paused = false;
+                printf("Resume\n");
+            } else if (ch == 'p') {
+                is_paused = true;
+                printf("Pause\n");
+            }
+        }
+    }
 
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore terminal settings
+}
 
-    switch (ch) {
-    case 's': return EventType::START;
-    case 'p': return EventType::PAUSE;
-    case 'q': return EventType::QUIT;
-    default: return EventType::NONE;
+// Function to run Whisper inference in a separate thread
+void inference_thread(whisper_context* ctx, ThreadSafeQueue& audio_queue, const whisper_params& params) {
+    while (!stop_inference_thread) {
+        if (is_paused) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
+        if (audio_queue.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        auto pcmf32 = audio_queue.pop();
+
+        whisper_full_params wparams = whisper_full_default_params(params.beam_size > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
+
+        wparams.print_progress   = false;
+        wparams.print_special    = params.print_special;
+        wparams.print_realtime   = false;
+        wparams.print_timestamps = !params.no_timestamps;
+        wparams.translate        = params.translate;
+        wparams.single_segment   = true; // Always process as a single segment
+        wparams.max_tokens       = params.max_tokens;
+        wparams.language         = params.language.c_str();
+        wparams.n_threads        = params.n_threads;
+        wparams.beam_search.beam_size = params.beam_size;
+        wparams.audio_ctx        = params.audio_ctx;
+        wparams.tdrz_enable      = params.tinydiarize;
+
+        if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            fprintf(stderr, "%s: failed to process audio\n", __func__);
+            continue;
+        }
+
+        // Print the result
+        const int n_segments = whisper_full_n_segments(ctx);
+        for (int i = 0; i < n_segments; ++i) {
+            const char* text = whisper_full_get_segment_text(ctx, i);
+            printf("%s", text);
+            fflush(stdout);
+        }
+        printf("\n");
     }
 }
 
@@ -185,12 +274,25 @@ int main(int argc, char ** argv) {
         exit(0);
     }
 
+    // Start the key listener thread
+    std::thread key_thread(key_listener);
+    key_thread.detach();
+
     struct whisper_context_params cparams = whisper_context_default_params();
 
     cparams.use_gpu    = params.use_gpu;
     cparams.flash_attn = params.flash_attn;
 
     struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+    if (!ctx) {
+        fprintf(stderr, "%s: whisper_init_from_file_with_params() failed!\n", __func__);
+        return 1;
+    }
+
+    // Thread-safe queue for audio data
+    ThreadSafeQueue audio_queue;
+    // Start the inference thread
+    std::thread inference_thread_obj(inference_thread, ctx, std::ref(audio_queue), std::ref(params));
 
     std::vector<float> pcmf32    (n_samples_30s, 0.0f);
     std::vector<float> pcmf32_old;
@@ -229,8 +331,8 @@ int main(int argc, char ** argv) {
     }
 
     int n_iter = 0;
-
     bool is_running = true;
+    bool prev_paused = is_paused.load();
 
     std::ofstream fout;
     if (params.fname_out.length() > 0) {
@@ -260,6 +362,20 @@ int main(int argc, char ** argv) {
 
     // main audio loop
     while (is_running) {
+        // Check if the pause state has changed
+        bool current_paused = is_paused.load();
+        if (prev_paused && !current_paused) {
+            // Transition from paused to resumed: clear the audio buffer
+            audio.clear();
+            printf("Audio buffer cleared on resume.\n");
+        }
+        prev_paused = current_paused;
+
+        if (is_paused) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+
         if (params.save_audio) {
             wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
         }
@@ -267,24 +383,6 @@ int main(int argc, char ** argv) {
         is_running = sdl_poll_events();
 
         if (!is_running) {
-            break;
-        }
-
-        EventType event = get_keypress();
-
-        switch (event) {
-        case EventType::START:
-            audio.resume();
-            printf("Start\n");
-            break;
-        case EventType::PAUSE:
-            audio.pause();
-            printf("Pause\n");
-            break;
-        case EventType::QUIT:
-            printf("Quit\n");
-            return 0;
-        case EventType::NONE:
             break;
         }
 
@@ -298,6 +396,7 @@ int main(int argc, char ** argv) {
                 }
                 audio.get(params.step_ms, pcmf32_new);
 
+                /*
                 if ((int) pcmf32_new.size() > 2*n_samples_step) {
                     fprintf(stderr, "\n\n%s: WARNING: cannot process audio fast enough, dropping audio ...\n\n", __func__);
                     audio.clear();
@@ -307,6 +406,11 @@ int main(int argc, char ** argv) {
                 if ((int) pcmf32_new.size() >= n_samples_step) {
                     audio.clear();
                     break;
+                }
+                */
+                if ((int) pcmf32_new.size() >= n_samples_step) {
+                    // Push audio data into the queue
+                    audio_queue.push(pcmf32_new);
                 }
 
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -466,6 +570,10 @@ int main(int argc, char ** argv) {
             fflush(stdout);
         }
     }
+
+    // Stop the inference thread
+    stop_inference_thread = true;
+    inference_thread_obj.join();
 
     audio.pause();
 
