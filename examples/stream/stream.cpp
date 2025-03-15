@@ -201,7 +201,7 @@ int main(int argc, char ** argv) {
 
     const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1; // number of steps to print new line
 
-    params.no_timestamps  = !use_vad;
+    params.no_timestamps  = use_vad;
     params.no_context    |= use_vad;
     params.max_tokens     = 0;
 
