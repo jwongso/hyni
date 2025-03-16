@@ -115,9 +115,9 @@ else()
         endif()
     endif (WHISPER_SDL2)
 
-    add_subdirectory(deprecation-warning)
+    #add_subdirectory(deprecation-warning)
 endif()
 
-if (WHISPER_SDL2)
-    add_subdirectory(wchess)
-endif (WHISPER_SDL2)
+# if (WHISPER_SDL2)
+#     add_subdirectory(wchess)
+# endif (WHISPER_SDL2)
