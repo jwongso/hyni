@@ -34,15 +34,17 @@ void key_listener(ChatAPI& chatapi, audio_async& audio) {
                 for (const auto& text : transcriptions) {
                     combined_transcription += text + " ";
                 }
-                std::string response = chatapi.sendMessage(combined_transcription);
-                std::string reply = chatapi.getAssistantReply(response);
-                std::cout << "Assistant: " << reply << std::endl;
+                // std::string response = chatapi.sendMessage(combined_transcription);
+                // std::string reply = chatapi.getAssistantReply(response);
+                // std::cout << "Assistant: " << reply << std::endl;
+                std::cout << " -------------------------- " << std::endl;
+                std::cout << "Prompt: " << combined_transcription << std::endl;
+                std::cout << " -------------------------- " << std::endl;
             }
 
             // Clear the transcriptions vector and audio buffer
             transcriptions.clear();
             audio.clear();
-            std::cout << "New chat session started.\n";
         }
     }
 
