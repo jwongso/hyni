@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5) # for add_link_options and implicit target directories.
-project("whisper.cpp" C CXX)
-project("whisper.cpp" VERSION 1.7.4)
+project("hyni" C CXX)
+project("hyni" VERSION 1.7.4)
 include(CheckIncludeFileCXX)
 
 set(SOVERSION 1)
@@ -26,12 +26,12 @@ endif()
 
 string(
     APPEND opts
-        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O3;-march=native;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=alderlake;-O3;-march=native;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
         "$<$<AND:$<CONFIG:DEBUG>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-O0;-g3;-std=c++17;-D_GLIBCXX_DEBUG;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
-        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O2;-march=native;-g;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
-        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O3;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=alderlake;-O3;-g;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=alderlake;-O3;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
         "$<$<AND:$<CONFIG:DEBUG>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-O0;-g3;-D_GLIBCXX_DEBUG;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
-        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O2;-g;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=alderlake;-O3;-g;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
 )
 add_compile_options("${opts}")
 
