@@ -24,7 +24,6 @@ ggml-metal-embed.metal
 ggml-metal-embed.metal.tmp
 
 /main
-/stream
 /command
 /talk
 /talk-llama
