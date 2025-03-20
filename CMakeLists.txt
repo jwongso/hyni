@@ -5,6 +5,15 @@ include(CheckIncludeFileCXX)
 
 set(SOVERSION 1)
 
+find_program(CCACHE_FOUND ccache)
+if(CCACHE_FOUND)
+    message("Found ccache ${CCACHE_FOUND}")
+    message("Using ccache to speed up compilation")
+    set(ENV{CCACHE_CPP2} "yes")
+    set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_FOUND})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_FOUND})
+endif(CCACHE_FOUND)
+
 #set(CMAKE_WARN_DEPRECATED YES)
 set(CMAKE_WARN_UNUSED_CLI YES)
 
@@ -14,6 +23,17 @@ if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
+
+string(
+    APPEND opts
+        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O3;-march=native;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:DEBUG>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-O0;-g3;-std=c++17;-D_GLIBCXX_DEBUG;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:CXX>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O2;-march=native;-g;-std=c++17;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELEASE>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O3;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:DEBUG>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-O0;-g3;-D_GLIBCXX_DEBUG;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+        "$<$<AND:$<CONFIG:RELWITHDEBINFO>,$<COMPILE_LANGUAGE:C>>:-MMD;-Wall;-Wno-deprecated-declarations;-march=native;-O2;-g;-fPIC;-DBOOST_BIND_GLOBAL_PLACEHOLDERS>"
+)
+add_compile_options("${opts}")
 
 # Add path to modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/")
@@ -31,22 +51,22 @@ else()
     set(WHISPER_STANDALONE OFF)
 endif()
 
-if (EMSCRIPTEN)
-    set(BUILD_SHARED_LIBS_DEFAULT OFF)
+# if (EMSCRIPTEN)
+#     set(BUILD_SHARED_LIBS_DEFAULT OFF)
 
-    option(WHISPER_WASM_SINGLE_FILE "whisper: embed WASM inside the generated whisper.js" ON)
+#     option(WHISPER_WASM_SINGLE_FILE "whisper: embed WASM inside the generated whisper.js" ON)
 
-    # TODO: without these, we get the following error:
-    #       wasm-ld: error: --shared-memory is disallowed by whisper.cpp.o because it was not compiled with 'atomics' or 'bulk-memory' features.
-    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
-else()
-    if (MINGW)
-        set(BUILD_SHARED_LIBS_DEFAULT OFF)
-    else()
-        set(BUILD_SHARED_LIBS_DEFAULT ON)
-    endif()
-endif()
+#     # TODO: without these, we get the following error:
+#     #       wasm-ld: error: --shared-memory is disallowed by whisper.cpp.o because it was not compiled with 'atomics' or 'bulk-memory' features.
+#     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
+#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
+# else()
+#     if (MINGW)
+#         set(BUILD_SHARED_LIBS_DEFAULT OFF)
+#     else()
+#         set(BUILD_SHARED_LIBS_DEFAULT ON)
+#     endif()
+# endif()
 
 option(BUILD_SHARED_LIBS "build shared libraries" ${BUILD_SHARED_LIBS_DEFAULT})
 
@@ -121,9 +141,10 @@ whisper_option_depr(WARNING     WHISPER_SYCL_F16            GGML_SYCL_F16)
 #
 
 if (NOT TARGET ggml)
-    add_subdirectory(ggml)
-    # ... otherwise assume ggml is added by a parent CMakeLists.txt
+     add_subdirectory(ggml)
+     # ... otherwise assume ggml is added by a parent CMakeLists.txt
 endif()
+
 add_subdirectory(src)
 
 #
@@ -175,11 +196,13 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/whisper.pc"
 # programs, examples and tests
 #
 
-if (WHISPER_BUILD_TESTS AND NOT CMAKE_JS_VERSION)
-    #include(CTest)
-    #add_subdirectory(tests)
-endif ()
+add_subdirectory(stream)
 
-if (WHISPER_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
+# if (WHISPER_BUILD_TESTS AND NOT CMAKE_JS_VERSION)
+#     #include(CTest)
+#     #add_subdirectory(tests)
+# endif ()
+
+# if (WHISPER_BUILD_EXAMPLES)
+#     add_subdirectory(examples)
+# endif()
