@@ -58,3 +58,4 @@ cmake-build-debug/
 .cxx/
 .gradle/
 local.properties
+CMakeLists.txt.user

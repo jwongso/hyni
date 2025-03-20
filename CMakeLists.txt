@@ -51,23 +51,6 @@ else()
     set(WHISPER_STANDALONE OFF)
 endif()
 
-# if (EMSCRIPTEN)
-#     set(BUILD_SHARED_LIBS_DEFAULT OFF)
-
-#     option(WHISPER_WASM_SINGLE_FILE "whisper: embed WASM inside the generated whisper.js" ON)
-
-#     # TODO: without these, we get the following error:
-#     #       wasm-ld: error: --shared-memory is disallowed by whisper.cpp.o because it was not compiled with 'atomics' or 'bulk-memory' features.
-#     set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
-#     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3 -pipe -pthread -s TOTAL_STACK=5242880")
-# else()
-#     if (MINGW)
-#         set(BUILD_SHARED_LIBS_DEFAULT OFF)
-#     else()
-#         set(BUILD_SHARED_LIBS_DEFAULT ON)
-#     endif()
-# endif()
-
 option(BUILD_SHARED_LIBS "build shared libraries" ${BUILD_SHARED_LIBS_DEFAULT})
 
 #
@@ -195,14 +178,5 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/whisper.pc"
 #
 # programs, examples and tests
 #
-
 add_subdirectory(stream)
 
-# if (WHISPER_BUILD_TESTS AND NOT CMAKE_JS_VERSION)
-#     #include(CTest)
-#     #add_subdirectory(tests)
-# endif ()
-
-# if (WHISPER_BUILD_EXAMPLES)
-#     add_subdirectory(examples)
-# endif()
