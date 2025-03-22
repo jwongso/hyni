@@ -3,13 +3,25 @@
 #include "common-sdl.h"
 #include "chatapi.h"
 #include <iostream>
+#include <set>
 #include <termios.h>
 #include <thread>
 #include <atomic>
 #include <string>
 #include <unistd.h>
 #include <vector>
-#include <algorithm> // For std::search
+#include <algorithm>
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <nlohmann/json.hpp>
+
+
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace websocket = beast::websocket;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
 
 // Global flag for pause/resume
 std::atomic<bool> is_paused(false);
@@ -17,8 +29,127 @@ std::atomic<bool> is_paused(false);
 // Global vector to store transcriptions
 std::vector<std::string> transcriptions;
 
+// Shared state for WebSocket server
+class shared_state {
+    std::set<websocket::stream<tcp::socket>*> m_connections;
+    std::mutex m_mutex;
+
+public:
+    void join(websocket::stream<tcp::socket>* ws) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_connections.insert(ws);
+    }
+
+    void leave(websocket::stream<tcp::socket>* ws) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_connections.erase(ws);
+    }
+
+    bool is_client_connected() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return !m_connections.empty();
+    }
+
+    void broadcast(const std::string& message) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto ws : m_connections) {
+            ws->text(true);
+            ws->write(net::buffer(message));
+        }
+    }
+};
+
+void process_prompt(const std::string& combined_transcription, ChatAPI& chatapi, std::shared_ptr<shared_state> state) {
+    // Create a JSON message for the prompt
+    nlohmann::json prompt_message = {
+        {"type", "prompt"},
+        {"content", combined_transcription}
+    };
+
+    // Print to console
+    std::cout << " -------------------------- " << std::endl
+              << "Prompt: " << combined_transcription << std::endl
+              << " -------------------------- " << std::endl;
+
+    // Send the prompt message to WebSocket clients
+    state->broadcast(prompt_message.dump());
+
+    // Send the combined transcription to the ChatAPI
+    std::string response = chatapi.sendMessage(combined_transcription);
+    std::string reply = chatapi.getAssistantReply(response);
+
+    // Create a JSON message for the assistant's response
+    nlohmann::json response_message = {
+        {"type", "response"},
+        {"content", reply}
+    };
+
+    // Print to console
+    std::cout << " -------------------------- " << std::endl
+              << "Assistant: " << reply << std::endl
+              << " -------------------------- " << std::endl;
+
+    // Send the response message to WebSocket clients
+    state->broadcast(response_message.dump());
+}
+
+// WebSocket session handler
+void do_session(tcp::socket socket, std::shared_ptr<shared_state> state, ChatAPI& chatapi) {
+    websocket::stream<tcp::socket> ws{std::move(socket)};
+    try {
+        ws.accept();
+
+        state->join(&ws);
+
+        for (;;) {
+            beast::flat_buffer buffer;
+            ws.read(buffer);
+            // Convert the message to a string
+            std::string message = beast::buffers_to_string(buffer.data());
+
+            // Parse the message as JSON
+            nlohmann::json json_message = nlohmann::json::parse(message);
+
+            // Check if the message is a prompt
+            if (json_message["type"] == "prompt") {
+                std::string combined_transcription = json_message["content"];
+
+                // Use the helper function to process the prompt
+                process_prompt(combined_transcription, chatapi, state);
+            }
+        }
+    } catch (beast::system_error const& se) {
+        if (se.code() != websocket::error::closed) {
+            std::cerr << "WebSocket Error: " << se.code().message() << std::endl;
+        }
+    } catch (std::exception const& e) {
+        std::cerr << "WebSocket Error: " << e.what() << std::endl;
+    }
+
+    // Remove the client from the connections set
+    state->leave(&ws);
+}
+
+// WebSocket server
+void websocket_server(std::shared_ptr<shared_state> state, ChatAPI& chatapi) {
+    try {
+        net::io_context ioc;
+        tcp::acceptor acceptor{ioc, {tcp::v4(), 8080}};
+
+        std::cout << "WebSocket server is running on port 8080..." << std::endl;
+
+        for (;;) {
+            tcp::socket socket{ioc};
+            acceptor.accept(socket);
+            std::thread{do_session, std::move(socket), state, std::ref(chatapi)}.detach();
+        }
+    } catch (std::exception const& e) {
+        std::cerr << "WebSocket Server Error: " << e.what() << std::endl;
+    }
+}
+
 // Function to listen for key presses
-void key_listener(ChatAPI& chatapi, audio_async& audio) {
+void key_listener(ChatAPI& chatapi, audio_async& audio, std::shared_ptr<shared_state> state) {
     struct termios oldt, newt;
     tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
@@ -28,31 +159,30 @@ void key_listener(ChatAPI& chatapi, audio_async& audio) {
     while (true) {
         char ch = getchar();
         if (ch == 's') {
-            // Send transcriptions to ChatAPI
-            if (!transcriptions.empty()) {
-                std::string combined_transcription;
-                for (const auto& text : transcriptions) {
-                    combined_transcription += text + " ";
+            // Check if a WebSocket client is connected
+            if (state->is_client_connected()) {
+                std::cout << "WebSocket client is connected. Waiting for prompt from client..." << std::endl;
+            } else {
+                // No WebSocket client connected, proceed with keypress behavior
+                if (!transcriptions.empty()) {
+                    std::string combined_transcription;
+                    for (const auto& text : transcriptions) {
+                        combined_transcription += text + " ";
+                    }
+
+                    // Use the helper function to process the prompt
+                    process_prompt(combined_transcription, chatapi, state);
+
+                    // Clear the transcriptions vector and audio buffer
+                    transcriptions.clear();
+                    audio.clear();
                 }
-
-                std::cout << " -------------------------- " << std::endl;
-                std::cout << "Prompt: " << combined_transcription << std::endl;
-                std::cout << " -------------------------- " << std::endl;
-
-                std::string response = chatapi.sendMessage(combined_transcription);
-                std::string reply = chatapi.getAssistantReply(response);
-                std::cout << "Assistant: " << reply << std::endl;
             }
-
-            // Clear the transcriptions vector and audio buffer
-            transcriptions.clear();
-            audio.clear();
         }
     }
 
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore terminal settings
 }
-
 // Function to extract new content from the transcription
 std::string extract_new_content(const std::string& previous, const std::string& current) {
     if (previous.empty()) {
@@ -103,7 +233,7 @@ std::string lrtrim(const std::string& text) {
 int main() {
     // Initialize whisper context
     struct whisper_context_params cparams = whisper_context_default_params();
-    struct whisper_context* ctx = whisper_init_from_file_with_params("models/ggml-base.en.bin", cparams); // Use the base model
+    struct whisper_context* ctx = whisper_init_from_file_with_params("models/ggml-small.en.bin", cparams); // Use the base model
     if (!ctx) {
         std::cerr << "Failed to initialize Whisper context.\n";
         return 1;
@@ -122,13 +252,13 @@ int main() {
                     "https://api.deepseek.com/v1/chat/completions",
                     "deepseek-coder");
 
-
-    // std::string response = chatapi.sendMessage("Hello, world!", 50, 0.7f);
-    // std::string reply = chatapi.getAssistantReply(response);
-    // std::cout << "Assistant Reply: " << reply << std::endl;
+    // Start the WebSocket server
+    auto state = std::make_shared<shared_state>();
+    std::thread ws_thread(websocket_server, state, std::ref(chatapi));
+    ws_thread.detach();
 
     // Start the key listener thread
-    std::thread key_thread(key_listener, std::ref(chatapi), std::ref(audio));
+    std::thread key_thread(key_listener, std::ref(chatapi), std::ref(audio), state);
     key_thread.detach();
 
     // Main loop
@@ -188,6 +318,14 @@ int main() {
                     transcriptions.push_back(new_content);
                     std::cout << new_content << std::endl; // Print the new content
                     previous_transcription = current_transcription; // Update the previous transcription
+
+                    nlohmann::json transcribe_message = {
+                        {"type", "transcribe"},
+                        {"content", new_content}
+                    };
+
+                    // Broadcast the new content to WebSocket clients
+                    state->broadcast(transcribe_message.dump());
                 }
             }
         }

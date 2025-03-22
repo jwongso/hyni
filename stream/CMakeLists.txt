@@ -44,6 +44,8 @@ if (WHISPER_FFMPEG)
     set(COMMON_SOURCES_FFMPEG ffmpeg-transcode.cpp)
 endif()
 
+find_package(nlohmann_json REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
 
 add_library(${TARGET} STATIC
     common.h
@@ -97,7 +99,8 @@ if (WHISPER_SDL2)
 
     include(DefaultTargetOptions)
 
-    target_link_libraries(${TARGET} PRIVATE common common-sdl whisper curl ${CMAKE_THREAD_LIBS_INIT})
+    target_link_libraries(${TARGET} PRIVATE common common-sdl whisper curl nlohmann_json::nlohmann_json
+        Boost::system ${CMAKE_THREAD_LIBS_INIT})
 
     install(TARGETS ${TARGET} RUNTIME)
 endif ()
